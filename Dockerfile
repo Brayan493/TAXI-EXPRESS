@@ -1,67 +1,95 @@
-# Usa PHP 8.2 con Apache
-FROM php:8.2-apache
+Docker: FROM php:8.2-apache
 
-# Instalar dependencias del sistema
+# Instala Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Instala dependencias del sistema y extensiones de PHP
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     libpng-dev \
     libonig-dev \
     libxml2-dev \
+    libpq-dev \
     libzip-dev \
     zip \
     unzip \
+    && docker-php-ext-install pdo_pgsql pgsql mbstring exif pcntl bcmath gd zip \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Instalar extensiones de PHP requeridas por Laravel
-RUN docker-php-ext-install \
-    pdo_mysql \
-    mbstring \
-    exif \
-    pcntl \
-    bcmath \
-    gd \
-    zip
-
-# Instalar Composer
+# Instala Composer 2.x
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Habilitar mod_rewrite de Apache (necesario para Laravel)
-RUN a2enmod rewrite
-
-# Establecer directorio de trabajo
 WORKDIR /var/www/html
 
-# Copiar archivos del proyecto
+# Copia archivos de dependencias
+COPY composer.json composer.lock package*.json ./
+
+# Instala dependencias de PHP (sin dev)
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts
+
+# ⚡ CAMBIO CRÍTICO: Instalar TODAS las dependencias de Node (incluidas devDependencies)
+# porque Vite está en devDependencies y lo necesitamos para compilar
+RUN npm ci
+
+# Copia todo el código fuente
 COPY . /var/www/html
 
-# Instalar dependencias de Composer (sin dependencias de desarrollo)
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# Ejecuta scripts post-install
+RUN composer run-script post-autoload-dump --no-interaction || true
 
-# Crear directorios de caché y darles permisos
-RUN mkdir -p storage/framework/sessions \
-    storage/framework/views \
-    storage/framework/cache \
-    storage/logs \
-    bootstrap/cache
+# Compila assets con Vite
+RUN npm run build
 
-# Dar permisos a directorios críticos
+# 🧹 OPCIONAL: Limpia node_modules después del build para reducir tamaño de imagen
+RUN rm -rf node_modules && npm ci --omit=dev
+
+# Verificación de build
+RUN echo "======================================" && \
+    echo "📦 VERIFICACIÓN DE BUILD" && \
+    echo "======================================" && \
+    ls -lah public/ && \
+    echo "" && \
+    echo "📁 Contenido de public/build:" && \
+    ls -lah public/build/ && \
+    echo "" && \
+    if [ -f "public/build/manifest.json" ]; then \
+        echo "✅ manifest.json encontrado:"; \
+        cat public/build/manifest.json; \
+    else \
+        echo "❌ manifest.json NO encontrado!"; \
+        exit 1; \
+    fi && \
+    echo "" && \
+    echo "🎨 Archivos CSS:" && \
+    find public/build -name "*.css" -exec ls -lh {} \; && \
+    echo "" && \
+    echo "⚡ Archivos JS:" && \
+    find public/build -name "*.js" -exec ls -lh {} \; && \
+    echo "======================================"
+
+# Configura permisos
 RUN chown -R www-data:www-data \
     /var/www/html/storage \
-    /var/www/html/bootstrap/cache
+    /var/www/html/bootstrap/cache \
+    /var/www/html/public && \
+    chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache && \
+    chmod -R 755 /var/www/html/public
 
-RUN chmod -R 775 \
-    /var/www/html/storage \
-    /var/www/html/bootstrap/cache
+# Habilita módulos de Apache
+RUN a2enmod rewrite headers expires deflate
 
-# Configurar Apache para que apunte a la carpeta public de Laravel
-RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
+# Copia configuración de Apache
+COPY docker/000-default.conf /etc/apache2/sites-available/000-default.conf
 
-# Habilitar AllowOverride All para que funcione el .htaccess
-RUN sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf
+# Configura Apache para escuchar en puerto 10000
+RUN sed -i 's/Listen 80/Listen 10000/' /etc/apache2/ports.conf
 
-# Exponer puerto 80
-EXPOSE 80
+EXPOSE 10000
 
-# Comando para iniciar Apache
-CMD ["apache2-foreground"]
+# Copia y configura entrypoint
+COPY docker/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
