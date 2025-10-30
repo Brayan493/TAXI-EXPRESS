@@ -84,7 +84,8 @@ RUN a2enmod rewrite headers expires deflate
 COPY docker/000-default.conf /etc/apache2/sites-available/000-default.conf
 
 # Configura Apache para escuchar en puerto 10000
-RUN sed -i 's/Listen 80/Listen 10000/' /etc/apache2/ports.conf
+RUN sed -i 's/Listen 80/Listen ${PORT:-10000}/' /etc/apache2/ports.conf && \
+    sed -i 's/Listen 10000/Listen ${PORT:-10000}/' /etc/apache2/ports.conf
 
 EXPOSE 10000
 
