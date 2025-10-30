@@ -13,6 +13,11 @@
         value: false
       - key: APP_URL
         value: https://taxi-express-zm4i.onrender.com
+      # ⚡ AGREGAR ESTAS DOS LÍNEAS:
+      - key: ASSET_URL
+        value: https://taxi-express-zm4i.onrender.com
+      - key: FORCE_HTTPS
+        value: true
       - key: DB_CONNECTION
         value: pgsql
       - key: DB_HOST
@@ -29,3 +34,5 @@
         value: database
       - key: LOG_CHANNEL
         value: stack
+      - key: FORCE_HTTPS
+        value: true  
